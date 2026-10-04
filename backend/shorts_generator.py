@@ -1,8 +1,9 @@
-import base64
 import json
 import os
 import secrets
 import subprocess
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 from openai import OpenAI
@@ -12,9 +13,9 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-6-luna")
-OPENAI_IMAGE_MODEL = os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-2")
 OPENAI_TTS_MODEL = os.getenv("OPENAI_TTS_MODEL", "gpt-4o-mini-tts")
 OPENAI_TTS_VOICE = os.getenv("OPENAI_TTS_VOICE", "alloy")
+PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "")
 SCENE_COUNT = max(4, min(8, int(os.getenv("SHORTS_SCENE_COUNT", "6"))))
 
 
@@ -64,10 +65,9 @@ def make_script(client, keyword):
                     f"영상은 {SCENE_COUNT}개 장면으로 구성한다. JSON만 반환한다. "
                     "필드는 title, script, hashtags, scenes다. "
                     "script는 230~320자 자연스러운 한국어 내레이션이며 괄호, 이모지, 장면 지시문을 넣지 않는다. "
-                    "scenes는 정확히 장면 수만큼의 배열이며 각 항목은 image_prompt와 narration_hint를 가진다. "
-                    "image_prompt는 영어로 작성하고, 세로형 YouTube Shorts에 적합한 시네마틱 실사 또는 고품질 일러스트 장면을 설명한다. "
-                    "이미지 안에는 글자, 로고, 워터마크를 넣지 않는다. "
-                    "각 장면은 앞 장면과 시각적으로 겹치지 않도록 핵심 피사체와 구도를 바꾼다."
+                    "scenes는 정확히 장면 수만큼의 배열이며 각 항목은 video_query와 narration_hint를 가진다. "
+                    "video_query는 Pexels에서 검색하기 좋은 짧은 영어 검색어다. "
+                    "사람, 장소, 사물, 행동처럼 실제 촬영 영상으로 찾기 쉬운 표현을 사용한다."
                 ),
             },
             {"role": "user", "content": f"키워드: {keyword}"},
@@ -89,49 +89,90 @@ def make_script(client, keyword):
     return title, script, hashtags, scenes
 
 
-def generate_images(client, scenes, job):
-    paths = []
-    for index, scene in enumerate(scenes, 1):
-        prompt = (
-            "Create a vertical 9:16 visual for a Korean YouTube Shorts video. "
-            "No text, no subtitles, no logos, no watermark. "
-            "Strong central subject, clear composition, high contrast, visually engaging on a phone screen. "
-            + str(scene.get("image_prompt", "cinematic visual"))
+def pexels_video(query, job, index):
+    if not PEXELS_API_KEY:
+        raise RuntimeError("PEXELS_API_KEY가 서버에 설정되지 않았습니다.")
+
+    params = urllib.parse.urlencode({
+        "query": query,
+        "orientation": "portrait",
+        "size": "medium",
+        "locale": "en-US",
+        "per_page": 15,
+    })
+    request = urllib.request.Request(
+        "https://api.pexels.com/v1/videos/search?" + params,
+        headers={"Authorization": PEXELS_API_KEY, "User-Agent": "AI-YouTube-Shorts/1.0"},
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        data = json.loads(response.read().decode("utf-8"))
+
+    videos = data.get("videos", [])
+    if not videos:
+        # A portrait search can be too restrictive for niche topics.
+        params = urllib.parse.urlencode({"query": query, "size": "medium", "per_page": 15})
+        request = urllib.request.Request(
+            "https://api.pexels.com/v1/videos/search?" + params,
+            headers={"Authorization": PEXELS_API_KEY, "User-Agent": "AI-YouTube-Shorts/1.0"},
         )
-        response = client.images.generate(
-            model=OPENAI_IMAGE_MODEL,
-            prompt=prompt,
-            size="1024x1536",
-            quality="low",
-        )
-        item = response.data[0]
-        encoded = getattr(item, "b64_json", None)
-        if not encoded:
-            raise RuntimeError("이미지 생성 결과를 받지 못했습니다.")
-        path = OUTPUT_DIR / f"{job}_scene_{index}.png"
-        path.write_bytes(base64.b64decode(encoded))
-        paths.append(path)
-    return paths
+        with urllib.request.urlopen(request, timeout=30) as response:
+            videos = json.loads(response.read().decode("utf-8")).get("videos", [])
+
+    if not videos:
+        raise RuntimeError(f"Pexels 영상 검색 결과가 없습니다: {query}")
+
+    # Prefer the largest portrait-ish MP4 we can download without excessive size.
+    candidates = []
+    for video in videos:
+        for vf in video.get("video_files", []):
+            if vf.get("file_type") != "video/mp4" or not vf.get("link"):
+                continue
+            w, h = int(vf.get("width") or 0), int(vf.get("height") or 0)
+            portrait_score = 1 if h >= w else 0
+            candidates.append((portrait_score, min(w, 1080), vf["link"]))
+    if not candidates:
+        raise RuntimeError(f"Pexels에서 MP4 파일을 찾지 못했습니다: {query}")
+
+    candidates.sort(reverse=True)
+    link = candidates[0][2]
+    path = OUTPUT_DIR / f"{job}_scene_{index}.mp4"
+    urllib.request.urlretrieve(link, path)
+    return path
 
 
-def render(images, audio, srt, output, duration):
-    segment = duration / len(images)
+def render(clips, audio, srt, output, duration):
+    segment = duration / len(clips)
     concat = OUTPUT_DIR / f"{output.stem}_concat.txt"
+    normalized = []
+
+    # Normalize every stock clip into a 1080x1920 vertical segment.
+    for index, clip in enumerate(clips, 1):
+        normalized_path = OUTPUT_DIR / f"{output.stem}_norm_{index}.mp4"
+        target = segment
+        cmd = [
+            "ffmpeg", "-y", "-i", str(clip),
+            "-t", f"{target:.3f}",
+            "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920",
+            "-r", "30", "-an", "-c:v", "libx264", "-preset", os.getenv("FFMPEG_PRESET", "veryfast"),
+            "-crf", "25", "-pix_fmt", "yuv420p", str(normalized_path),
+        ]
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+        if r.returncode:
+            raise RuntimeError(r.stderr[-3000:])
+        normalized.append(normalized_path)
+
     lines = []
-    for image in images:
-        lines.append(f"file '{image.as_posix()}'")
-        lines.append(f"duration {segment:.4f}")
-    lines.append(f"file '{images[-1].as_posix()}'")
+    for item in normalized:
+        lines.append(f"file '{item.as_posix()}'")
     concat.write_text("\n".join(lines), encoding="utf-8")
 
     subtitle = srt.as_posix().replace("\\", "/").replace(":", "\\:")
     style = "FontName=Noto Sans CJK KR,FontSize=22,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=3,Alignment=2,MarginV=180"
     vf = "subtitles=" + subtitle + ":force_style='" + style + "'"
+
     cmd = [
-        "ffmpeg", "-y",
-        "-f", "concat", "-safe", "0", "-i", str(concat),
-        "-i", str(audio),
-        "-vf", vf,
+        "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat),
+        "-i", str(audio), "-vf", vf,
         "-c:v", "libx264", "-preset", os.getenv("FFMPEG_PRESET", "veryfast"),
         "-crf", "25", "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "128k", "-shortest",
@@ -139,6 +180,8 @@ def render(images, audio, srt, output, duration):
     ]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
     concat.unlink(missing_ok=True)
+    for item in normalized:
+        item.unlink(missing_ok=True)
     if r.returncode:
         raise RuntimeError(r.stderr[-5000:])
 
@@ -146,13 +189,15 @@ def render(images, audio, srt, output, duration):
 def generate(keyword):
     if not OPENAI_API_KEY:
         raise RuntimeError("OPENAI_API_KEY가 서버에 설정되지 않았습니다.")
+    if not PEXELS_API_KEY:
+        raise RuntimeError("PEXELS_API_KEY가 서버에 설정되지 않았습니다. Pexels API 키를 서버에 추가하세요.")
 
     client = OpenAI(api_key=OPENAI_API_KEY)
     job = secrets.token_hex(8)
     audio = OUTPUT_DIR / f"{job}.mp3"
     srt = OUTPUT_DIR / f"{job}.srt"
     video = OUTPUT_DIR / f"{job}.mp4"
-    images = []
+    clips = []
 
     try:
         title, script, hashtags, scenes = make_script(client, keyword)
@@ -172,8 +217,12 @@ def generate(keyword):
             raise RuntimeError(f"생성 음성이 65초를 초과했습니다: {duration:.1f}초")
 
         make_srt(title, script, duration, srt)
-        images = generate_images(client, scenes, job)
-        render(images, audio, srt, video, duration)
+
+        for index, scene in enumerate(scenes, 1):
+            query = str(scene.get("video_query", keyword)).strip()
+            clips.append(pexels_video(query, job, index))
+
+        render(clips, audio, srt, video, duration)
 
         return {
             "job_id": job,
@@ -181,11 +230,13 @@ def generate(keyword):
             "script": script,
             "hashtags": hashtags,
             "duration": round(duration, 1),
-            "scene_count": len(images),
+            "scene_count": len(clips),
             "filename": video.name,
+            "media_source": "Pexels",
+            "attribution_url": "https://www.pexels.com/",
         }
     finally:
         audio.unlink(missing_ok=True)
         srt.unlink(missing_ok=True)
-        for image in images:
-            image.unlink(missing_ok=True)
+        for clip in clips:
+            clip.unlink(missing_ok=True)
