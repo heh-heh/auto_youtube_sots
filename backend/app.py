@@ -13,11 +13,7 @@ from googleapiclient.http import MediaFileUpload
 
 app = FastAPI(title="AI YouTube Shorts API")
 
-origins = [
-    x.strip()
-    for x in os.getenv("ALLOWED_ORIGINS", "*").split(",")
-    if x.strip()
-]
+origins = [x.strip() for x in os.getenv("ALLOWED_ORIGINS", "*").split(",") if x.strip()]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -32,10 +28,7 @@ REDIRECT_URI = os.getenv(
     "https://heh-heh.github.io/auto_youtube_sots/oauth/callback.html",
 )
 TOKEN_PATH = Path(
-    os.getenv(
-        "YOUTUBE_TOKEN_PATH",
-        "/home/ssm-user/youtube-shorts-data/youtube_token.json",
-    )
+    os.getenv("YOUTUBE_TOKEN_PATH", "/home/ssm-user/youtube-shorts-data/youtube_token.json")
 )
 API_KEY = os.getenv("YOUTUBE_API_KEY", "")
 
@@ -44,6 +37,7 @@ SCOPES = [
     "https://www.googleapis.com/auth/youtube.readonly",
 ]
 
+# state -> PKCE code_verifier
 oauth_states = {}
 
 
@@ -54,14 +48,10 @@ def oauth_configured() -> bool:
 def load_credentials():
     if not TOKEN_PATH.exists():
         return None
-
     try:
-        credentials = Credentials.from_authorized_user_file(
-            str(TOKEN_PATH), SCOPES
-        )
+        credentials = Credentials.from_authorized_user_file(str(TOKEN_PATH), SCOPES)
     except Exception:
         return None
-
     if credentials.expired and credentials.refresh_token:
         try:
             credentials.refresh(Request())
@@ -70,16 +60,28 @@ def load_credentials():
             os.chmod(TOKEN_PATH, 0o600)
         except Exception:
             return None
-
-    if credentials.valid:
-        return credentials
-
-    return None
+    return credentials if credentials.valid else None
 
 
 def require_api_key(x_api_key: str | None):
     if API_KEY and x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail="invalid API key")
+
+
+def make_flow():
+    flow = Flow.from_client_config(
+        {
+            "web": {
+                "client_id": CLIENT_ID,
+                "client_secret": CLIENT_SECRET,
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+            }
+        },
+        scopes=SCOPES,
+    )
+    flow.redirect_uri = REDIRECT_URI
+    return flow
 
 
 @app.get("/health")
@@ -95,29 +97,13 @@ def health():
 @app.get("/api/youtube/auth")
 def youtube_auth(x_api_key: str | None = Header(default=None)):
     require_api_key(x_api_key)
-
     if not oauth_configured():
-        raise HTTPException(
-            status_code=500,
-            detail="YouTube OAuth credentials are not configured.",
-        )
+        raise HTTPException(status_code=500, detail="YouTube OAuth credentials are not configured.")
 
+    flow = make_flow()
     state = secrets.token_urlsafe(32)
-    oauth_states[state] = True
 
-    flow = Flow.from_client_config(
-        {
-            "web": {
-                "client_id": CLIENT_ID,
-                "client_secret": CLIENT_SECRET,
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token",
-            }
-        },
-        scopes=SCOPES,
-    )
-    flow.redirect_uri = REDIRECT_URI
-
+    # Google OAuth may use PKCE. authorization_url() creates the verifier.
     authorization_url, _ = flow.authorization_url(
         access_type="offline",
         include_granted_scopes="true",
@@ -125,6 +111,10 @@ def youtube_auth(x_api_key: str | None = Header(default=None)):
         state=state,
     )
 
+    if not flow.code_verifier:
+        raise HTTPException(status_code=500, detail="OAuth PKCE verifier was not generated.")
+
+    oauth_states[state] = flow.code_verifier
     return {"authorization_url": authorization_url, "state": state}
 
 
@@ -137,27 +127,15 @@ async def youtube_callback(
 
     code = payload.get("code")
     state = payload.get("state")
-
     if not code or not state:
         raise HTTPException(status_code=400, detail="code and state are required")
 
-    if state not in oauth_states:
+    code_verifier = oauth_states.pop(state, None)
+    if not code_verifier:
         raise HTTPException(status_code=400, detail="invalid or expired OAuth state")
 
-    oauth_states.pop(state, None)
-
-    flow = Flow.from_client_config(
-        {
-            "web": {
-                "client_id": CLIENT_ID,
-                "client_secret": CLIENT_SECRET,
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token",
-            }
-        },
-        scopes=SCOPES,
-    )
-    flow.redirect_uri = REDIRECT_URI
+    flow = make_flow()
+    flow.code_verifier = code_verifier
 
     try:
         flow.fetch_token(code=code)
@@ -165,7 +143,6 @@ async def youtube_callback(
         raise HTTPException(status_code=400, detail=f"OAuth token exchange failed: {exc}")
 
     credentials = flow.credentials
-
     TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
     TOKEN_PATH.write_text(credentials.to_json())
     os.chmod(TOKEN_PATH, 0o600)
@@ -176,26 +153,16 @@ async def youtube_callback(
 @app.get("/api/youtube/status")
 def youtube_status(x_api_key: str | None = Header(default=None)):
     require_api_key(x_api_key)
-
     credentials = load_credentials()
     if not credentials:
-        return {
-            "connected": False,
-            "message": "YouTube OAuth credentials are required.",
-        }
+        return {"connected": False, "message": "YouTube OAuth credentials are required."}
 
     try:
         youtube = build("youtube", "v3", credentials=credentials)
-        response = (
-            youtube.channels()
-            .list(part="snippet,statistics", mine=True)
-            .execute()
-        )
-
+        response = youtube.channels().list(part="snippet,statistics", mine=True).execute()
         items = response.get("items", [])
         if not items:
             return {"connected": False, "message": "No YouTube channel found."}
-
         channel = items[0]
         return {
             "connected": True,
@@ -220,26 +187,19 @@ async def upload(
     x_api_key: str | None = Header(default=None),
 ):
     require_api_key(x_api_key)
-
     if privacy not in {"private", "unlisted", "public"}:
         raise HTTPException(status_code=400, detail="invalid privacy")
-
     if not video.filename:
         raise HTTPException(status_code=400, detail="video file is required")
 
     credentials = load_credentials()
     if not credentials:
-        raise HTTPException(
-            status_code=401,
-            detail="Connect YouTube OAuth before upload.",
-        )
+        raise HTTPException(status_code=401, detail="Connect YouTube OAuth before upload.")
 
     suffix = Path(video.filename).suffix or ".mp4"
     temp_path = None
-
     try:
         import tempfile
-
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp:
             temp_path = temp.name
             while True:
@@ -249,16 +209,13 @@ async def upload(
                 temp.write(chunk)
 
         youtube = build("youtube", "v3", credentials=credentials)
-
         body = {
             "snippet": {
                 "title": title,
                 "description": description,
                 "categoryId": "22",
             },
-            "status": {
-                "privacyStatus": privacy,
-            },
+            "status": {"privacyStatus": privacy},
         }
 
         if publish_at:
