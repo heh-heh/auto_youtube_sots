@@ -10,6 +10,8 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
+from fastapi.responses import FileResponse
+from shorts_generator import generate as generate_shorts_video, OUTPUT_DIR
 
 app = FastAPI(title="AI YouTube Shorts API")
 
@@ -31,6 +33,7 @@ TOKEN_PATH = Path(
     os.getenv("YOUTUBE_TOKEN_PATH", "/home/ssm-user/youtube-shorts-data/youtube_token.json")
 )
 API_KEY = os.getenv("YOUTUBE_API_KEY", "")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
 SCOPES = [
     "https://www.googleapis.com/auth/youtube.upload",
@@ -91,6 +94,7 @@ def health():
         "service": "youtube-shorts",
         "oauth_configured": oauth_configured(),
         "youtube_connected": load_credentials() is not None,
+        "shorts_generator_configured": bool(OPENAI_API_KEY),
     }
 
 
@@ -176,6 +180,33 @@ def youtube_status(x_api_key: str | None = Header(default=None)):
     except Exception as exc:
         return {"connected": False, "message": str(exc)}
 
+
+
+@app.post("/api/shorts/generate")
+def generate_short(payload: dict, x_api_key: str | None = Header(default=None)):
+    require_api_key(x_api_key)
+    keyword = str(payload.get("keyword", "")).strip()
+    if not keyword:
+        raise HTTPException(status_code=400, detail="keyword is required")
+    if len(keyword) > 200:
+        raise HTTPException(status_code=400, detail="keyword is too long")
+    try:
+        result = generate_shorts_video(keyword)
+        result["video_url"] = f"/api/shorts/file/{result['filename']}"
+        return {"ok": True, **result}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Shorts 생성 실패: {exc}")
+
+
+@app.get("/api/shorts/file/{filename}")
+def get_short_file(filename: str):
+    safe_name = Path(filename).name
+    if safe_name != filename or not safe_name.endswith(".mp4"):
+        raise HTTPException(status_code=400, detail="invalid filename")
+    path = OUTPUT_DIR / safe_name
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="video not found")
+    return FileResponse(path, media_type="video/mp4", filename=safe_name)
 
 @app.post("/api/youtube/upload")
 async def upload(
