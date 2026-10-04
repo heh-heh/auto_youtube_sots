@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="ko">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>YouTube OAuth</title>
+<style>body{font-family:system-ui,sans-serif;background:#080b10;color:#fff;display:grid;place-items:center;min-height:100vh;margin:0}main{max-width:520px;padding:32px;text-align:center}.ok{color:#7ee787}.error{color:#ff7b72}</style>
+</head>
+<body><main><h1>YouTube 연결</h1><p id="message">Google 인증 결과를 확인하는 중...</p></main>
+<script>
+(async()=>{
+ const m=document.getElementById("message"),p=new URLSearchParams(location.search),code=p.get("code"),state=p.get("state"),error=p.get("error");
+ const api=(localStorage.getItem("YT_API_URL")||"").replace(/\/$/,""),key=localStorage.getItem("YT_API_KEY")||"";
+ if(error){m.className="error";m.textContent="Google 인증 실패: "+error;return}
+ if(!code||!state||!api){m.className="error";m.textContent="OAuth 결과 또는 백엔드 설정을 찾을 수 없습니다.";return}
+ try{
+  const r=await fetch(api+"/api/youtube/callback",{method:"POST",headers:{"Content-Type":"application/json",...(key?{"X-API-Key":key}:{})},body:JSON.stringify({code,state})});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok||!d.ok)throw new Error(d.detail||d.message||"OAuth 연결 실패");
+  m.className="ok";m.textContent="YouTube 연결 완료. 관리자 화면으로 돌아갑니다.";
+  setTimeout(()=>location.href="../index.html?youtube_connected=1",1000);
+ }catch(e){m.className="error";m.textContent="연결 실패: "+(e.message||"알 수 없는 오류")}
+})();
+</script></body></html>
