@@ -1,6 +1,6 @@
 import os
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.cors import CORSMiddleware\nfrom fastapi import Header
 
 app=FastAPI(title="AI YouTube Shorts API")
 origins=[x.strip() for x in os.getenv("ALLOWED_ORIGINS","*").split(",") if x.strip()]
