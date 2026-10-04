@@ -150,7 +150,7 @@ def render(clips, audio, srt, output, duration):
         normalized_path = OUTPUT_DIR / f"{output.stem}_norm_{index}.mp4"
         target = segment
         cmd = [
-            "ffmpeg", "-y", "-i", str(clip),
+            "ffmpeg", "-y", "-stream_loop", "-1", "-i", str(clip),
             "-t", f"{target:.3f}",
             "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920",
             "-r", "30", "-an", "-c:v", "libx264", "-preset", os.getenv("FFMPEG_PRESET", "veryfast"),
