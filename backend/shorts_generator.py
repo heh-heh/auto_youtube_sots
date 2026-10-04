@@ -246,7 +246,7 @@ def generate(keyword):
             make_srt(title, script, duration, srt)
             r = subprocess.run([
                 FFMPEG_BIN, "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
-                "-t", str(duration), "-c:a", "aac", "-b:a", "96k", str(audio)
+                "-t", str(duration), "-c:a", "libmp3lame", "-b:a", "96k", str(audio)
             ], capture_output=True, text=True, timeout=60)
             if r.returncode:
                 raise RuntimeError("데모 오디오 생성 실패: " + r.stderr[-2000:])
