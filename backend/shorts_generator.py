@@ -6,12 +6,11 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from openai import OpenAI
-
 OUTPUT_DIR = Path(os.getenv("SHORTS_OUTPUT_DIR", "/home/ssm-user/youtube-shorts-data/generated"))
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+SHORTS_DEMO_MODE = os.getenv("SHORTS_DEMO_MODE", "false").lower() in ("1", "true", "yes", "on")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-6-luna")
 OPENAI_TTS_MODEL = os.getenv("OPENAI_TTS_MODEL", "gpt-4o-mini-tts")
 OPENAI_TTS_VOICE = os.getenv("OPENAI_TTS_VOICE", "alloy")
@@ -52,6 +51,28 @@ def duration_of(audio):
     if r.returncode:
         raise RuntimeError("ffprobe 실패")
     return float(r.stdout.strip())
+
+
+def demo_script(keyword):
+    title = f"{keyword} 30초 핵심 정리"
+    script = (
+        f"오늘은 {keyword}에 대해 핵심만 빠르게 알아보겠습니다. "
+        "이 영상은 비용 없이 전체 영상 생성 파이프라인을 테스트하는 데모 쇼츠입니다. "
+        "실제 서비스에서는 최신 자료를 바탕으로 대본과 장면 구성을 자동으로 생성할 수 있습니다. "
+        "지금은 외부 AI API 없이 영상 생성과 MP4 렌더링이 정상 동작하는지 확인합니다."
+    )
+    hashtags = f"#shorts #{keyword.replace(' ', '')} #데모"
+    scenes = [
+        {"video_query": keyword, "narration_hint": "주제 소개"},
+        {"video_query": "technology abstract", "narration_hint": "핵심 설명"},
+        {"video_query": "business technology", "narration_hint": "서비스 동작 설명"},
+        {"video_query": "mobile phone vertical", "narration_hint": "자동화 과정"},
+        {"video_query": "computer programming", "narration_hint": "파이프라인 테스트"},
+        {"video_query": "success celebration", "narration_hint": "마무리"},
+    ][:SCENE_COUNT]
+    while len(scenes) < SCENE_COUNT:
+        scenes.append({"video_query": "technology abstract", "narration_hint": "추가 장면"})
+    return title, script, hashtags, scenes
 
 
 def make_script(client, keyword):
@@ -95,7 +116,6 @@ def dev_video(job, index, duration=10):
     path = OUTPUT_DIR / f"{job}_dev_scene_{index}.mp4"
     hue = (index * 37) % 360
     vf = (
-        f"drawbox=x=0:y=0:w=iw:h=ih:color=hsvh={hue}:0.18:t=fill,"
         "drawbox=x='(w-420)/2+180*sin(2*PI*t/3)':"
         "y='(h-420)/2+180*cos(2*PI*t/3)':w=420:h=420:"
         "color=white@0.16:t=fill,format=yuv420p"
@@ -211,9 +231,99 @@ def render(clips, audio, srt, output, duration):
 
 
 def generate(keyword):
-    if not OPENAI_API_KEY:
-        raise RuntimeError("OPENAI_API_KEY가 서버에 설정되지 않았습니다.")
-    if not PEXELS_API_KEY:
+    job = secrets.token_hex(8)
+    audio = OUTPUT_DIR / f"{job}.mp3"
+    srt = OUTPUT_DIR / f"{job}.srt"
+    video = OUTPUT_DIR / f"{job}.mp4"
+    clips = []
+
+    try:
+        if SHORTS_DEMO_MODE:
+            title, script, hashtags, scenes = demo_script(keyword)
+            duration = 30.0
+            make_srt(title, script, duration, srt)
+            r = subprocess.run([
+                "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
+                "-t", str(duration), "-c:a", "aac", "-b:a", "96k", str(audio)
+            ], capture_output=True, text=True, timeout=60)
+            if r.returncode:
+                raise RuntimeError("데모 오디오 생성 실패: " + r.stderr[-2000:])
+            for index in range(1, SCENE_COUNT + 1):
+                clips.append(dev_video(job, index, duration / SCENE_COUNT))
+            render(clips, audio, srt, video, duration)
+            return {
+                "job_id": job, "title": title, "script": script, "hashtags": hashtags,
+                "duration": duration, "scene_count": len(clips), "filename": video.name,
+                "media_source": "demo", "attribution_url": None,
+            }
+
+        if not OPENAI_API_KEY:
+            raise RuntimeError("OPENAI_API_KEY가 서버에 설정되지 않았습니다.")
+        if not PEXELS_API_KEY:
+            if SHORTS_DEV_MODE:
+                title = f"{keyword} 테스트 영상"
+                script = "외부 영상 API 없이 생성 파이프라인을 테스트하는 영상입니다."
+                hashtags = "#shorts #test"
+                duration = 10.0
+                make_srt(title, script, duration, srt)
+                r = subprocess.run([
+                    "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
+                    "-t", str(duration), "-c:a", "aac", "-b:a", "96k", str(audio)
+                ], capture_output=True, text=True, timeout=60)
+                if r.returncode:
+                    raise RuntimeError("개발용 오디오 생성 실패: " + r.stderr[-2000:])
+                clips.append(dev_video(job, 1, duration))
+                render(clips, audio, srt, video, duration)
+                return {
+                    "job_id": job, "title": title, "script": script, "hashtags": hashtags,
+                    "duration": duration, "scene_count": 1, "filename": video.name,
+                    "media_source": "dev", "attribution_url": None
+                }
+            raise RuntimeError("PEXELS_API_KEY가 서버에 설정되지 않았습니다.")
+
+        from openai import OpenAI
+        client = OpenAI(api_key=OPENAI_API_KEY)
+        title, script, hashtags, scenes = make_script(client, keyword)
+
+        speech = client.audio.speech.create(
+            model=OPENAI_TTS_MODEL,
+            voice=OPENAI_TTS_VOICE,
+            input=script,
+            response_format="mp3",
+            instructions="한국어 쇼츠 내레이션처럼 또렷하고 자연스럽고 약간 빠르게 읽어줘.",
+            speed=1.05,
+        )
+        speech.write_to_file(audio)
+
+        duration = duration_of(audio)
+        if duration > 65:
+            raise RuntimeError(f"생성 음성이 65초를 초과했습니다: {duration:.1f}초")
+
+        make_srt(title, script, duration, srt)
+
+        for index, scene in enumerate(scenes, 1):
+            query = str(scene.get("video_query", keyword)).strip()
+            clips.append(pexels_video(query, job, index))
+
+        render(clips, audio, srt, video, duration)
+
+        return {
+            "job_id": job,
+            "title": title,
+            "script": script,
+            "hashtags": hashtags,
+            "duration": round(duration, 1),
+            "scene_count": len(clips),
+            "filename": video.name,
+            "media_source": "Pexels",
+            "attribution_url": "https://www.pexels.com/",
+        }
+    finally:
+        audio.unlink(missing_ok=True)
+        srt.unlink(missing_ok=True)
+        for clip in clips:
+            clip.unlink(missing_ok=True)
+
         if SHORTS_DEV_MODE:
             return dev_video(job, index)
         raise RuntimeError("PEXELS_API_KEY가 서버에 설정되지 않았습니다.")
