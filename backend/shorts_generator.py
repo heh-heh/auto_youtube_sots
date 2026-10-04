@@ -17,6 +17,8 @@ OPENAI_TTS_VOICE = os.getenv("OPENAI_TTS_VOICE", "alloy")
 PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "")
 SHORTS_DEV_MODE = os.getenv("SHORTS_DEV_MODE", "true").lower() in ("1", "true", "yes", "on")
 SCENE_COUNT = max(4, min(8, int(os.getenv("SHORTS_SCENE_COUNT", "6"))))
+FFMPEG_BIN = os.getenv("FFMPEG_BIN", "/usr/bin/ffmpeg")
+FFPROBE_BIN = os.getenv("FFPROBE_BIN", "/usr/bin/ffprobe")
 
 
 def ts(seconds):
@@ -44,7 +46,7 @@ def make_srt(title, script, duration, path):
 
 def duration_of(audio):
     r = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+        [FFPROBE_BIN, "-v", "error", "-show_entries", "format=duration",
          "-of", "default=noprint_wrappers=1:nokey=1", str(audio)],
         capture_output=True, text=True, timeout=30,
     )
