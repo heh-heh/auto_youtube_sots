@@ -98,12 +98,40 @@ $("testConnection").onclick=testConnection;
 $("connect").onclick=connectYouTube;
 $("disconnect").onclick=disconnect;
 
-$("generate").onclick=()=>{
+$("generate").onclick=async()=>{
   const topic=$("topic").value.trim();
-  if(!topic){msg("uploadStatus","먼저 쇼츠 주제를 입력하세요.","error");$("topic").focus();return;}
-  $("title").value=$("title").value.trim()||topic+" | 60초 핵심 정리";
-  $("script").value="지금부터 "+topic+"에 대해 60초 안에 핵심만 알려드리겠습니다.\n\n첫 번째 핵심을 설명합니다.\n\n두 번째로 알아둘 점입니다.\n\n마지막으로 실제 적용 방법을 정리합니다.\n\n도움이 되었다면 구독과 좋아요 부탁드립니다.";
-  msg("uploadStatus","대본 초안이 생성되었습니다.","success");
+  if(!topic){msg("uploadStatus","먼저 쇼츠 키워드를 입력하세요.","error");$("topic").focus();return;}
+  if(!API_URL){msg("uploadStatus","먼저 백엔드 URL을 저장하세요.","error");return;}
+  $("generate").disabled=true;
+  $("generate").textContent="MP4 생성 중...";
+  msg("uploadStatus","AI 대본 → TTS 음성 → 자막 → MP4를 만드는 중입니다. EC2에서 조금 시간이 걸릴 수 있습니다.");
+  try{
+    const r=await fetch(API_URL+"/api/shorts/generate",{
+      method:"POST",
+      headers:{"Content-Type":"application/json",...(API_KEY?{"X-API-Key":API_KEY}:{})},
+      body:JSON.stringify({keyword:topic})
+    });
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(d.detail||"HTTP "+r.status);
+    $("title").value=d.title||topic+" | 60초 Shorts";
+    $("script").value=d.script||"";
+    $("hashtags").value=d.hashtags||"#shorts";
+    let result=$("generatedResult");
+    if(!result){
+      result=document.createElement("div");
+      result.id="generatedResult";
+      result.className="generated-result";
+      $("script").parentElement.appendChild(result);
+    }
+    const videoUrl=API_URL+d.video_url;
+    result.innerHTML="<strong>MP4 생성 완료 · "+esc(String(d.duration||0))+"초</strong><video controls playsinline src='"+esc(videoUrl)+"'></video><a class='button-link' href='"+esc(videoUrl)+"' target='_blank' rel='noopener'>MP4 열기</a>";
+    msg("uploadStatus","실제 MP4 Shorts가 생성되었습니다. 영상을 확인한 뒤 대기열에 넣을 수 있습니다.","success");
+  }catch(e){
+    msg("uploadStatus","MP4 생성 실패: "+(e.message||"서버 오류"),"error");
+  }finally{
+    $("generate").disabled=false;
+    $("generate").textContent="MP4 Shorts 생성";
+  }
 };
 
 $("draft").onclick=()=>{
