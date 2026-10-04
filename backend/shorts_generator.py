@@ -16,6 +16,7 @@ OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-6-luna")
 OPENAI_TTS_MODEL = os.getenv("OPENAI_TTS_MODEL", "gpt-4o-mini-tts")
 OPENAI_TTS_VOICE = os.getenv("OPENAI_TTS_VOICE", "alloy")
 PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "")
+SHORTS_DEV_MODE = os.getenv("SHORTS_DEV_MODE", "true").lower() in ("1", "true", "yes", "on")
 SCENE_COUNT = max(4, min(8, int(os.getenv("SHORTS_SCENE_COUNT", "6"))))
 
 
@@ -87,6 +88,29 @@ def make_script(client, keyword):
     if not isinstance(scenes, list) or len(scenes) != SCENE_COUNT:
         raise RuntimeError(f"AI 콘티 장면 수가 {SCENE_COUNT}개가 아닙니다.")
     return title, script, hashtags, scenes
+
+
+def dev_video(job, index, duration=10):
+    """Create a moving MP4 locally when external video APIs are unavailable."""
+    path = OUTPUT_DIR / f"{job}_dev_scene_{index}.mp4"
+    hue = (index * 37) % 360
+    vf = (
+        f"drawbox=x=0:y=0:w=iw:h=ih:color=hsvh={hue}:0.18:t=fill,"
+        "drawbox=x='(w-420)/2+180*sin(2*PI*t/3)':"
+        "y='(h-420)/2+180*cos(2*PI*t/3)':w=420:h=420:"
+        "color=white@0.16:t=fill,format=yuv420p"
+    )
+    cmd = [
+        "ffmpeg", "-y", "-f", "lavfi",
+        "-i", "color=c=0x10182f:s=1080x1920:r=30",
+        "-vf", vf, "-t", str(duration), "-an",
+        "-c:v", "libx264", "-preset", "veryfast",
+        "-crf", "28", "-pix_fmt", "yuv420p", str(path),
+    ]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    if r.returncode:
+        raise RuntimeError("개발용 영상 생성 실패: " + r.stderr[-2500:])
+    return path
 
 
 def pexels_video(query, job, index):
@@ -190,7 +214,9 @@ def generate(keyword):
     if not OPENAI_API_KEY:
         raise RuntimeError("OPENAI_API_KEY가 서버에 설정되지 않았습니다.")
     if not PEXELS_API_KEY:
-        raise RuntimeError("PEXELS_API_KEY가 서버에 설정되지 않았습니다. Pexels API 키를 서버에 추가하세요.")
+        if SHORTS_DEV_MODE:
+            return dev_video(job, index)
+        raise RuntimeError("PEXELS_API_KEY가 서버에 설정되지 않았습니다.")
 
     client = OpenAI(api_key=OPENAI_API_KEY)
     job = secrets.token_hex(8)
