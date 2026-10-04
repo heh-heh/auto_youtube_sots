@@ -11,7 +11,7 @@ from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from fastapi.responses import FileResponse
-from shorts_generator import generate as generate_shorts_video, OUTPUT_DIR
+from shorts_generator import generate as generate_shorts_video, OUTPUT_DIR, PEXELS_API_KEY
 
 app = FastAPI(title="AI YouTube Shorts API")
 
@@ -94,7 +94,9 @@ def health():
         "service": "youtube-shorts",
         "oauth_configured": oauth_configured(),
         "youtube_connected": load_credentials() is not None,
-        "shorts_generator_configured": bool(OPENAI_API_KEY),
+        "shorts_generator_configured": bool(OPENAI_API_KEY and PEXELS_API_KEY),
+        "openai_configured": bool(OPENAI_API_KEY),
+        "pexels_configured": bool(PEXELS_API_KEY),
     }
 
 
