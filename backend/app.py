@@ -34,6 +34,7 @@ TOKEN_PATH = Path(
 )
 API_KEY = os.getenv("YOUTUBE_API_KEY", "")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+SHORTS_DEMO_MODE = os.getenv("SHORTS_DEMO_MODE", "false").lower() in ("1", "true", "yes", "on")
 
 SCOPES = [
     "https://www.googleapis.com/auth/youtube.upload",
@@ -94,7 +95,8 @@ def health():
         "service": "youtube-shorts",
         "oauth_configured": oauth_configured(),
         "youtube_connected": load_credentials() is not None,
-        "shorts_generator_configured": bool(OPENAI_API_KEY and (PEXELS_API_KEY or SHORTS_DEV_MODE)),
+        "shorts_generator_configured": bool(SHORTS_DEMO_MODE or (OPENAI_API_KEY and (PEXELS_API_KEY or SHORTS_DEV_MODE))),
+        "shorts_demo_mode": SHORTS_DEMO_MODE,
         "openai_configured": bool(OPENAI_API_KEY),
         "pexels_configured": bool(PEXELS_API_KEY),
         "shorts_dev_mode": SHORTS_DEV_MODE,
