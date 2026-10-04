@@ -124,7 +124,7 @@ $("generate").onclick=async()=>{
       $("script").parentElement.appendChild(result);
     }
     const videoUrl=API_URL+d.video_url;
-    result.innerHTML="<strong>MP4 생성 완료 · "+esc(String(d.duration||0))+"초</strong><video controls playsinline src='"+esc(videoUrl)+"'></video><a class='button-link' href='"+esc(videoUrl)+"' target='_blank' rel='noopener'>MP4 열기</a>";
+    result.innerHTML="<strong>MP4 생성 완료 · "+esc(String(d.duration||0))+"초 · "+esc(String(d.scene_count||0))+"개 영상 장면</strong><video controls playsinline src='"+esc(videoUrl)+"'></video><a class='button-link' href='"+esc(videoUrl)+"' target='_blank' rel='noopener'>MP4 열기</a><small class='muted'>영상 소스: Pexels · <a href='"+esc(d.attribution_url||"https://www.pexels.com/")+"' target='_blank' rel='noopener'>Pexels</a></small>";
     msg("uploadStatus","실제 MP4 Shorts가 생성되었습니다. 영상을 확인한 뒤 대기열에 넣을 수 있습니다.","success");
   }catch(e){
     msg("uploadStatus","MP4 생성 실패: "+(e.message||"서버 오류"),"error");
