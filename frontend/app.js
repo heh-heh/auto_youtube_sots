@@ -150,7 +150,7 @@ $("upload").onclick=async()=>{
   const title=$("title").value.trim();
   if(!title){msg("uploadStatus","업로드 실패: 영상 제목을 입력하세요.","error");$("title").focus();return;}
   if($("approval").checked===false){msg("uploadStatus","업로드 차단: 승인된 콘텐츠만 업로드 옵션을 체크하세요.","error");return;}
-  const fd=new FormData();fd.append("video",file);fd.append("title",title);fd.append("description",$("hashtags").value.trim());fd.append("privacy",$("privacy").value);fd.append("publish_at",$("schedule").value||"");
+  const fd=new FormData();fd.append("video",file);fd.append("title",title);fd.append("description",($("hashtags").value.trim()+"\n\nVideo clips: Pexels\nhttps://www.pexels.com/").trim());fd.append("privacy",$("privacy").value);fd.append("publish_at",$("schedule").value||"");
   try{
     msg("uploadStatus","YouTube 업로드 요청 중...");
     const r=await fetch(API_URL+"/api/youtube/upload",{method:"POST",headers:API_KEY?{"X-API-Key":API_KEY}:{},body:fd});
