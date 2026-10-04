@@ -123,7 +123,7 @@ def dev_video(job, index, duration=10):
         "color=white@0.16:t=fill,format=yuv420p"
     )
     cmd = [
-        "ffmpeg", "-y", "-f", "lavfi",
+        FFMPEG_BIN, "-y", "-f", "lavfi",
         "-i", "color=c=0x10182f:s=1080x1920:r=30",
         "-vf", vf, "-t", str(duration), "-an",
         "-c:v", "libx264", "-preset", "veryfast",
@@ -196,7 +196,7 @@ def render(clips, audio, srt, output, duration):
         normalized_path = OUTPUT_DIR / f"{output.stem}_norm_{index}.mp4"
         target = segment
         cmd = [
-            "ffmpeg", "-y", "-stream_loop", "-1", "-i", str(clip),
+            FFMPEG_BIN, "-y", "-stream_loop", "-1", "-i", str(clip),
             "-t", f"{target:.3f}",
             "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920",
             "-r", "30", "-an", "-c:v", "libx264", "-preset", os.getenv("FFMPEG_PRESET", "veryfast"),
@@ -217,7 +217,7 @@ def render(clips, audio, srt, output, duration):
     vf = "subtitles=" + subtitle + ":force_style='" + style + "'"
 
     cmd = [
-        "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat),
+        FFMPEG_BIN, "-y", "-f", "concat", "-safe", "0", "-i", str(concat),
         "-i", str(audio), "-vf", vf,
         "-c:v", "libx264", "-preset", os.getenv("FFMPEG_PRESET", "veryfast"),
         "-crf", "25", "-pix_fmt", "yuv420p",
@@ -245,7 +245,7 @@ def generate(keyword):
             duration = 30.0
             make_srt(title, script, duration, srt)
             r = subprocess.run([
-                "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
+                FFMPEG_BIN, "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
                 "-t", str(duration), "-c:a", "aac", "-b:a", "96k", str(audio)
             ], capture_output=True, text=True, timeout=60)
             if r.returncode:
@@ -269,7 +269,7 @@ def generate(keyword):
                 duration = 10.0
                 make_srt(title, script, duration, srt)
                 r = subprocess.run([
-                    "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
+                    FFMPEG_BIN, "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
                     "-t", str(duration), "-c:a", "aac", "-b:a", "96k", str(audio)
                 ], capture_output=True, text=True, timeout=60)
                 if r.returncode:
