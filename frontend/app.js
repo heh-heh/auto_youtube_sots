@@ -58,15 +58,9 @@ async function connectYouTube(){
     const d=await r.json().catch(()=>({}));
     if(!r.ok)throw new Error(d.detail||"HTTP "+r.status);
     if(!d.authorization_url)throw new Error("Google 인증 주소를 받지 못했습니다.");
-    localStorage.setItem("YT_API_URL",API_URL);
-    localStorage.setItem("YT_API_KEY",API_KEY);
-    localStorage.setItem("YT_CLIENT_ID",CLIENT_ID);
-    localStorage.setItem("YT_REDIRECT_URL",REDIRECT_URL);
+    localStorage.setItem("YT_API_URL",API_URL);localStorage.setItem("YT_API_KEY",API_KEY);localStorage.setItem("YT_CLIENT_ID",CLIENT_ID);localStorage.setItem("YT_REDIRECT_URL",REDIRECT_URL);
     window.location.href=d.authorization_url;
-  }catch(e){
-    connected=false;setStatus("AUTH ERROR");
-    msg("connectionStatus","YouTube 연결 실패: "+(e.message||"OAuth 설정을 확인하세요."),"error");
-  }
+  }catch(e){connected=false;setStatus("AUTH ERROR");msg("connectionStatus","YouTube 연결 실패: "+(e.message||"OAuth 설정을 확인하세요."),"error");}
 }
 async function refreshYouTubeStatus(){
   if(!API_URL)return;
@@ -75,11 +69,13 @@ async function refreshYouTubeStatus(){
     const d=await r.json().catch(()=>({}));
     if(!r.ok||!d.connected)return;
     connected=true;setStatus("CONNECTED",true);
-    $("channelName").textContent=d.channel_name||"YouTube 채널 연결됨";
+    const channel=d.channel||{};
+    const stats=channel.statistics||{};
+    $("channelName").textContent=channel.title||"YouTube 채널 연결됨";
     $("channelText").textContent="YouTube 채널 정보를 정상적으로 불러왔습니다.";
-    $("subs").textContent=d.subscribers??"-";
-    $("views").textContent=d.views??"-";
-    $("videos").textContent=d.videos??"-";
+    $("subs").textContent=stats.subscriberCount??"-";
+    $("views").textContent=stats.viewCount??"-";
+    $("videos").textContent=stats.videoCount??"-";
     msg("connectionStatus","YouTube 연결 성공","success");
   }catch(e){}
 }
