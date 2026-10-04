@@ -51,23 +51,37 @@ async function testConnection(){
   }catch(e){msg("connectionStatus","연결 실패: "+(e.message||"서버에 접속할 수 없습니다."),"error");setStatus("ERROR");}
 }
 async function connectYouTube(){
-  if(!validateConnection(true))return;
+  if(!validateConnection(false))return;
   try{
-    msg("connectionStatus","YouTube 연결 설정 확인 중...");
-    const r=await fetch(API_URL+"/api/youtube/status",{headers:API_KEY?{"X-API-Key":API_KEY}:{}});
+    msg("connectionStatus","Google 인증 주소를 생성하는 중...");
+    const r=await fetch(API_URL+"/api/youtube/auth",{headers:API_KEY?{"X-API-Key":API_KEY}:{}});
     const d=await r.json().catch(()=>({}));
     if(!r.ok)throw new Error(d.detail||"HTTP "+r.status);
-    if(!d.connected)throw new Error(d.message||"YouTube OAuth 인증이 완료되지 않았습니다.");
-    connected=true;setStatus("CONNECTED",true);
-    $("channelName").textContent=d.channel_name||"YouTube 채널 연결됨";
-    $("channelText").textContent="YouTube 채널 정보를 정상적으로 불러왔습니다.";
-    $("subs").textContent=d.subscribers??"-";$("views").textContent=d.views??"-";$("videos").textContent=d.videos??"-";
-    msg("connectionStatus","YouTube 연결 성공","success");
+    if(!d.authorization_url)throw new Error("Google 인증 주소를 받지 못했습니다.");
+    localStorage.setItem("YT_API_URL",API_URL);
+    localStorage.setItem("YT_API_KEY",API_KEY);
+    localStorage.setItem("YT_CLIENT_ID",CLIENT_ID);
+    localStorage.setItem("YT_REDIRECT_URL",REDIRECT_URL);
+    window.location.href=d.authorization_url;
   }catch(e){
     connected=false;setStatus("AUTH ERROR");
     msg("connectionStatus","YouTube 연결 실패: "+(e.message||"OAuth 설정을 확인하세요."),"error");
-    $("channelText").textContent="Google OAuth 설정 및 인증 상태를 확인하세요.";
   }
+}
+async function refreshYouTubeStatus(){
+  if(!API_URL)return;
+  try{
+    const r=await fetch(API_URL+"/api/youtube/status",{headers:API_KEY?{"X-API-Key":API_KEY}:{}});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok||!d.connected)return;
+    connected=true;setStatus("CONNECTED",true);
+    $("channelName").textContent=d.channel_name||"YouTube 채널 연결됨";
+    $("channelText").textContent="YouTube 채널 정보를 정상적으로 불러왔습니다.";
+    $("subs").textContent=d.subscribers??"-";
+    $("views").textContent=d.views??"-";
+    $("videos").textContent=d.videos??"-";
+    msg("connectionStatus","YouTube 연결 성공","success");
+  }catch(e){}
 }
 function disconnect(){
   connected=false;auto=false;setStatus("OFFLINE");
@@ -140,4 +154,4 @@ $("save").onclick=()=>{
   msg("uploadStatus","자동화 설정을 저장했습니다.","success");
 };
 
-loadConnection();render();
+loadConnection();render();refreshYouTubeStatus();
